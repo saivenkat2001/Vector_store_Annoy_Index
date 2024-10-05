@@ -1,0 +1,7 @@
+# Set-ExecutionPolicy RemoteSigned -Scope Process
+
+numpy
+PyPDF2
+gensim
+annoy
+scikit-learn
