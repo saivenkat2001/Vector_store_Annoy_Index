@@ -2,8 +2,8 @@ import PyPDF2
 import numpy as np
 from annoy import AnnoyIndex
 import pickle
-from gensim.models import Word2Vec
 import re
+from sentence_transformers import SentenceTransformer
 
 def extract_text_from_pdf(pdf_path):
     with open(pdf_path, 'rb') as f:
@@ -18,24 +18,12 @@ def split_text_into_sentences(text):
     sentences = re.split(r'(?<=[.!?]) +', text)
     return sentences
 
-def preprocess_sentences(sentences):
-    return [sentence.lower().split() for sentence in sentences]
-
-def create_word2vec_model(sentences):
-    return Word2Vec(sentences, vector_size=100, min_count=1, window=5)
-
 def create_embeddings(sentences, model):
-    sentence_embeddings = []
-    for sentence in sentences:
-        if sentence:
-            sentence_vec = np.mean([model.wv[word] for word in sentence if word in model.wv], axis=0)
-        else:
-            sentence_vec = np.zeros(model.vector_size)
-        sentence_embeddings.append(sentence_vec)
+    sentence_embeddings = model.encode(sentences, convert_to_numpy=True)
     return sentence_embeddings
 
 def create_vector_store(sentences, sentence_embeddings, index_file='annoy_index.ann'):
-    vector_size = len(sentence_embeddings[0])
+    vector_size = sentence_embeddings.shape[1] 
     annoy_index = AnnoyIndex(vector_size, metric='angular')
     
     for i, embedding in enumerate(sentence_embeddings):
@@ -49,20 +37,14 @@ def create_vector_store(sentences, sentence_embeddings, index_file='annoy_index.
     print(f"Vector store created and Annoy index saved to {index_file}")
 
 def query_to_embedding(query, model):
-    tokens = query.lower().split()
-    word_vectors = [model.wv[word] for word in tokens if word in model.wv]
-    
-    if word_vectors:
-        query_embedding = np.mean(word_vectors, axis=0) 
-    else:
-        query_embedding = np.zeros(model.vector_size)  
+    query_embedding = model.encode([query], convert_to_numpy=True)[0]
     return query_embedding
 
-def get_top_n_similar_sentences(query_embedding, index_file='annoy_index.ann', n=5, max_length=30):
+def get_top_n_similar_sentences(query_embedding, index_file='annoy_index.ann', n=3):
     with open("vector_data.pkl", "rb") as f:
         sentences, sentence_embeddings = pickle.load(f)
     
-    vector_size = len(sentence_embeddings[0])
+    vector_size = sentence_embeddings.shape[1]
     annoy_index = AnnoyIndex(vector_size, metric='angular')
     annoy_index.load(index_file)
     top_n_indices, distances = annoy_index.get_nns_by_vector(query_embedding, n, include_distances=True)
@@ -71,19 +53,41 @@ def get_top_n_similar_sentences(query_embedding, index_file='annoy_index.ann', n
 
     return top_n_sentences
 
+def clean_sentence(sentence):
+    cleaned = re.sub(r'\[?\d+\]?', '', sentence)
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    return cleaned.strip()
+
 def main(pdf_path, query):
+    print(f"Analyzing PDF: {pdf_path}")
+    print(f"Query: {query}\n")
+
     text = extract_text_from_pdf(pdf_path)
     sentences = split_text_into_sentences(text)
-    preprocessed_sentences = preprocess_sentences(sentences)
-    model = create_word2vec_model(preprocessed_sentences)
-    sentence_embeddings = create_embeddings(preprocessed_sentences, model)
-    create_vector_store(sentences, sentence_embeddings)
-    query_embedding = query_to_embedding(query, model)
-    top_n = get_top_n_similar_sentences(query_embedding, n=5, max_length=30)
-    print("\nTop similar sentences and their similarity scores:\n")
-    for sentence, score in top_n:
-        print(f"Score: {score:.4f}, Sentence: {sentence}")
+    
+    print("Loading sentence-transformers model...")
+    model = SentenceTransformer('all-MiniLM-L6-v2')
 
-pdf_path = 'Cat.pdf' 
-query = "Cat is an animal"
-main(pdf_path, query)
+    print("Creating sentence embeddings...")
+    sentence_embeddings = create_embeddings(sentences, model)
+    
+    print("Creating vector store...")
+    create_vector_store(sentences, sentence_embeddings)
+    
+    print("Processing query...")
+    query_embedding = query_to_embedding(query, model)
+    
+    print("Retrieving similar sentences...")
+    top_n = get_top_n_similar_sentences(query_embedding, n=5)
+    
+    print("\nTop similar sentences and their similarity scores:\n")
+    for i, (sentence, score) in enumerate(top_n, 1):
+        cleaned_sentence = clean_sentence(sentence)
+        print(f"{i}. Score: {score:.4f}")
+        print(f"Sentence: {cleaned_sentence}")
+        print()
+
+if __name__ == "__main__":
+    pdf_path = 'Cat.pdf' 
+    query = "How many legs does a cat have?"
+    main(pdf_path, query)

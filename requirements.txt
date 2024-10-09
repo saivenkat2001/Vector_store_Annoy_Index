@@ -5,3 +5,6 @@ PyPDF2
 gensim
 annoy
 scikit-learn
+chromadb
+langchain
+sentence_transformers
